@@ -1,11 +1,196 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Animotion</title>
+
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    
+  <main class="app">
+    <aside class="sidebar">
+      <div class="logo">
+        <span>A</span>
+
+        <div>
+          <p>After Effects helper</p>
+          <h1>Animotion</h1>
+        </div>
+      </div>
+
+      <p class="intro">
+        Answer simple visual questions. Animotion turns your animation idea into something easier to understand.
+      </p>
+
+      <nav class="steps">
+        <button class="step active" data-step="0">01 Questions</button>
+        <button class="step" data-step="1" disabled>02 Preview</button>
+        <button class="step" data-step="2" disabled>03 Recipe</button>
+      </nav>
+    </aside>
+
+    <section class="work">
+      <header class="topbar">
+        <div>
+          <p id="kicker" class="kicker">Step 01</p>
+          <h2 id="title">Tell Animotion what you see in your head</h2>
+        </div>
+
+        <div class="actions">
+          <button id="back" disabled>Back</button>
+          <button id="next" class="primary">Continue</button>
+        </div>
+      </header>
+
+      <section class="panel active" data-panel="0">
+        <div class="grid">
+          <article class="card">
+            <h3>1. What are you animating?</h3>
+
+            <div class="choices" data-key="objectType">
+              <button data-value="text">Text</button>
+              <button data-value="logo">Logo</button>
+              <button data-value="image">Image</button>
+              <button data-value="shape">Shape</button>
+              <button data-value="button or UI element">Button / UI</button>
+              <button data-value="scene transition">Scene transition</button>
+              <button data-value="other">Other</button>
+            </div>
+
+            <input class="other" data-other="objectType" placeholder="Other object..." hidden />
+
+            <h3>2. What should it do?</h3>
+
+            <div class="choices" data-key="motionAction">
+              <button data-value="appear">Appear</button>
+              <button data-value="disappear">Disappear</button>
+              <button data-value="move from one side">Move from one side</button>
+              <button data-value="pop or bounce in">Pop / bounce</button>
+              <button data-value="reveal from behind something">Reveal from behind something</button>
+              <button data-value="draw itself">Draw itself</button>
+              <button data-value="zoom in">Zoom in</button>
+              <button data-value="blur into focus">Blur into focus</button>
+              <button data-value="glitch or flicker">Glitch / flicker</button>
+              <button data-value="other">Other</button>
+            </div>
+
+            <input class="other" data-other="motionAction" placeholder="Other movement..." hidden />
+
+            <h3>3. How should it feel?</h3>
+
+            <div class="choices" data-key="feeling">
+              <button data-value="smooth">Smooth</button>
+              <button data-value="playful">Playful</button>
+              <button data-value="fast">Fast</button>
+              <button data-value="soft">Soft</button>
+              <button data-value="professional">Professional</button>
+              <button data-value="cinematic">Cinematic</button>
+              <button data-value="chaotic">Chaotic</button>
+              <button data-value="futuristic">Futuristic</button>
+              <button data-value="other">Other</button>
+            </div>
+
+            <input class="other" data-other="feeling" placeholder="Other feeling..." hidden />
+          </article>
+
+          <article class="card">
+            <h3>4. Where does it start?</h3>
+
+            <div class="choices" data-key="startState">
+              <button data-value="invisible">Invisible</button>
+              <button data-value="small">Small</button>
+              <button data-value="off-screen left">Off-screen left</button>
+              <button data-value="off-screen right">Off-screen right</button>
+              <button data-value="below the final position">Below</button>
+              <button data-value="above the final position">Above</button>
+              <button data-value="behind a box or mask">Behind something</button>
+              <button data-value="blurry">Blurry</button>
+              <button data-value="other">Other</button>
+            </div>
+
+            <input class="other" data-other="startState" placeholder="Other start..." hidden />
+
+            <h3>5. Where does it end?</h3>
+
+            <div class="choices" data-key="endState">
+              <button data-value="visible in the center">Visible in center</button>
+              <button data-value="in final position">Final position</button>
+              <button data-value="larger">Larger</button>
+              <button data-value="off-screen">Off-screen</button>
+              <button data-value="sharp and focused">Sharp / focused</button>
+              <button data-value="other">Other</button>
+            </div>
+
+            <input class="other" data-other="endState" placeholder="Other end..." hidden />
+
+            <label for="context">Optional extra context</label>
+
+            <textarea
+              id="context"
+              placeholder="Example: I saw this in a YouTube intro. The text comes up from behind a rectangle and feels clean."
+            ></textarea>
+
+            <div class="example">
+              <strong>Example</strong>
+              <p>
+                Text → reveal from behind something → smooth → starts behind something → ends visible in center.
+              </p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="1">
+        <div class="previewGrid">
+          <article class="card">
+            <div class="split">
+              <div>
+                <h3>What Animotion understood</h3>
+                <p class="muted">This is generated by Gemma 4 from your answers.</p>
+              </div>
+
+              <button id="regen">Regenerate</button>
+            </div>
+
+            <div id="summary" class="result empty">
+              Fill in the questions first.
+            </div>
+
+            <div class="confirm">
+              <button id="confirm" class="primary">Yes, continue</button>
+              <button id="adjust">Adjust answers</button>
+            </div>
+          </article>
+
+          <article class="previewCard">
+            <div class="split top">
+              <div>
+                <h3>Preview area</h3>
+                <p class="muted">The generated CSS preview will be added later.</p>
+              </div>
+            </div>
+
+            <div class="previewPlaceholder">
+              <div class="previewObject">Preview</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="2">
+        <article class="card recipe">
+          <h3>After Effects recipe</h3>
+
+          <div id="recipe" class="result empty">
+            The real After Effects recipe will be generated in a later version.
+          </div>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
 </body>
 </html>
