@@ -5,7 +5,9 @@ const state = {
   step: 0,
   max: 0,
   answers: {},
-  aiSummary: ""
+  preview: null,
+  html: "",
+  css: ""
 };
 
 const titles = [
@@ -61,8 +63,10 @@ function bindEvents() {
 
   $("#regen").addEventListener("click", async () => {
     if (!collectAnswers()) return;
-    await generateBasicInterpretation();
+    await generatePreview();
   });
+
+  $("#replay").addEventListener("click", renderFrame);
 
   $("#adjust").addEventListener("click", () => {
     goToStep(0);
@@ -104,7 +108,7 @@ async function handleNext() {
     unlockStep(1);
     goToStep(1);
 
-    await generateBasicInterpretation();
+    await generatePreview();
     return;
   }
 
@@ -134,7 +138,9 @@ function goToStep(step) {
   $("#title").textContent = titles[step];
   $("#back").disabled = step === 0;
   $("#next").disabled = step === 2;
-  $("#next").textContent = step === 0 ? "Continue" : "Continue to recipe";
+  $("#next").textContent = step === 0 ? "Generate preview" : "Continue to recipe";
+
+  if (step === 1) renderFrame();
 }
 
 function unlockStep(step) {
@@ -179,15 +185,15 @@ function collectAnswers() {
   return true;
 }
 
-async function generateBasicInterpretation() {
+async function generatePreview() {
   $("#summary").className = "result";
-  $("#summary").innerHTML = `<p class="muted">Asking Gemma 4 what this animation probably means...</p>`;
-
-  console.log("Gemma request started");
+  $("#summary").innerHTML = `<p class="muted">Generating a visual preview with Gemma 4...</p>`;
 
   $("#next").disabled = true;
   $("#regen").disabled = true;
   $("#confirm").disabled = true;
+
+  console.log("Gemma CSS preview request started");
 
   try {
     const response = await fetch(GEN, {
@@ -198,9 +204,10 @@ async function generateBasicInterpretation() {
       body: JSON.stringify({
         model: MODEL,
         stream: false,
-        prompt: basicInterpretationPrompt(state.answers),
+        prompt: previewPrompt(state.answers),
         options: {
-          temperature: 0.3
+          temperature: 0.25,
+          top_p: 0.85
         }
       })
     });
@@ -211,15 +218,33 @@ async function generateBasicInterpretation() {
 
     const data = await response.json();
 
-    state.aiSummary = data.response || "";
+    console.log("Raw Gemma response:", data.response);
 
-    console.log("Gemma connection works");
-    console.log("Gemma response:", state.aiSummary);
+    const parsed = parseJSON(data.response);
 
-    renderAISummary(state.aiSummary);
+    if (!parsed) {
+      throw new Error("Gemma did not return valid JSON.");
+    }
+
+    state.preview = normalizePreview(parsed);
+    state.html = state.preview.html;
+    state.css = state.preview.css;
+
+    renderSummary();
+    renderFrame();
+
+    console.log("CSS preview generated");
   } catch (error) {
-    console.warn("Gemma connection failed:", error.message);
-    renderFallbackSummary();
+    console.warn("CSS preview generation failed:", error.message);
+
+    $("#summary").className = "result";
+    $("#summary").innerHTML = `
+      <h4>Preview could not be generated yet</h4>
+      <p>
+        The connection was made, but the generated preview was not usable yet.
+        This will be handled better in a later version.
+      </p>
+    `;
   }
 
   $("#next").disabled = false;
@@ -227,89 +252,168 @@ async function generateBasicInterpretation() {
   $("#confirm").disabled = false;
 }
 
-function basicInterpretationPrompt(answers) {
+function previewPrompt(answers) {
   return `
-You are Gemma 4 inside Animotion.
+You are Gemma 4 inside Animotion, an app for After Effects beginners.
 
-Animotion helps After Effects beginners explain animation ideas without using technical After Effects language.
+The user knows what an animation should look like, but they do not know the technical After Effects words.
 
-The user answered these questions:
+User answers:
 ${JSON.stringify(answers, null, 2)}
 
-Explain what animation the user probably wants.
+Your task:
+Interpret the animation and generate actual HTML and CSS for a small visual preview.
 
-Use this exact structure:
-
-What I understood:
-...
-
-Likely animation:
-...
-
-Why:
-...
-
-In normal words:
-...
-
-Keep it short and beginner-friendly.
+Return ONLY valid JSON.
 Do not use markdown.
-Do not use emojis.
+Do not write anything outside the JSON.
+
+JSON format:
+{
+  "understood": "one short normal sentence",
+  "techniqueName": "likely animation name in simple words",
+  "confidence": "High/Medium/Low",
+  "whyThisTechnique": "short reason",
+  "plainSummary": "normal-language summary",
+  "html": "minimal HTML. Use wrapper class preview-scene and main object class anim-object. No script tags.",
+  "css": "complete CSS with @keyframes. No external URLs/imports/scripts. The preview must auto-play. Duration 0.8s-2.5s. Fit inside 100vw/100vh."
+}
+
+Rules:
+- Use CSS animation only.
+- Do not use JavaScript.
+- Do not use script tags.
+- Do not use external files, URLs, imports, fonts or images.
+- The HTML must include preview-scene.
+- The HTML must include anim-object.
+- The CSS must include @keyframes.
+- If the idea is a reveal, show a mask-like window.
+- If the idea is pop or bounce, use scale overshoot.
+- If the idea is blur, animate filter blur.
+- If the idea is draw itself, use a simple line or shape animation.
+- If the idea is glitch, use quick opacity and translate changes.
+- Make the movement clear enough for the user to confirm whether it matches their idea.
 `;
 }
 
-function renderAISummary(text) {
-  const cleaned = cleanAIText(text);
+function parseJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const firstBrace = text?.indexOf("{") ?? -1;
+    const lastBrace = text?.lastIndexOf("}") ?? -1;
 
-  $("#summary").className = "result";
-  $("#summary").innerHTML = formatText(cleaned);
+    if (firstBrace < 0 || lastBrace < 0) return null;
+
+    try {
+      return JSON.parse(text.slice(firstBrace, lastBrace + 1));
+    } catch {
+      return null;
+    }
+  }
 }
 
-function renderFallbackSummary() {
-  const answers = state.answers;
+function normalizePreview(data) {
+  return {
+    understood: String(data.understood || "I understood your animation idea."),
+    techniqueName: String(data.techniqueName || "Custom motion"),
+    confidence: String(data.confidence || "Medium"),
+    whyThisTechnique: String(data.whyThisTechnique || "Based on your answers."),
+    plainSummary: String(data.plainSummary || data.understood || ""),
+    html: safeHTML(String(data.html || "")),
+    css: safeCSS(String(data.css || ""))
+  };
+}
+
+function safeHTML(html) {
+  return html
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/on\w+="[^"]*"/gi, "")
+    .replace(/on\w+='[^']*'/gi, "");
+}
+
+function safeCSS(css) {
+  return css
+    .replace(/@import[^;]+;/gi, "")
+    .replace(/url\((.*?)\)/gi, "none");
+}
+
+function renderSummary() {
+  const preview = state.preview;
 
   $("#summary").className = "result";
   $("#summary").innerHTML = `
     <h4>What I understood</h4>
-    <p>You want a ${escapeHTML(answers.objectType)} to ${escapeHTML(answers.motionAction)}.</p>
+    <p>${escapeHTML(preview.understood)}</p>
 
     <h4>Likely animation</h4>
-    <p>${escapeHTML(guessTechnique(answers))}</p>
+    <p><strong>${escapeHTML(preview.techniqueName)}</strong></p>
+
+    <h4>Confidence</h4>
+    <p>${escapeHTML(preview.confidence)}</p>
 
     <h4>Why</h4>
-    <p>This matches the movement and feeling you selected.</p>
+    <p>${escapeHTML(preview.whyThisTechnique)}</p>
 
     <h4>In normal words</h4>
-    <p>
-      The ${escapeHTML(answers.objectType)} starts ${escapeHTML(answers.startState)},
-      then ${escapeHTML(answers.motionAction)}, and ends ${escapeHTML(answers.endState)}
-      with a ${escapeHTML(answers.feeling)} feeling.
-    </p>
+    <p>${escapeHTML(preview.plainSummary)}</p>
   `;
 }
 
-function guessTechnique(answers) {
-  if (answers.motionAction.includes("reveal") || answers.startState.includes("behind")) {
-    return "Masked reveal";
-  }
+function renderFrame() {
+  const css = state.css || `
+    body {
+      margin: 0;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: system-ui;
+      background: #f8fafc;
+    }
 
-  if (answers.motionAction.includes("pop") || answers.motionAction.includes("bounce")) {
-    return "Pop-in animation";
-  }
+    .preview-scene {
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+    }
 
-  if (answers.motionAction.includes("blur")) {
-    return "Blur-to-focus reveal";
-  }
+    .anim-object {
+      padding: 20px 30px;
+      border-radius: 20px;
+      background: #7c3aed;
+      color: white;
+      font-weight: 900;
+    }
+  `;
 
-  if (answers.motionAction.includes("draw")) {
-    return "Draw-on animation";
-  }
+  const html = state.html || `
+    <div class="preview-scene">
+      <div class="anim-object">Preview</div>
+    </div>
+  `;
 
-  if (answers.motionAction.includes("glitch")) {
-    return "Glitch reveal";
-  }
+  $("#frame").srcdoc = `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          html,
+          body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+          }
 
-  return "Simple motion reveal";
+          ${css}
+        </style>
+      </head>
+      <body>
+        ${html}
+      </body>
+    </html>
+  `;
 }
 
 function renderRecipePlaceholder() {
@@ -329,28 +433,6 @@ function renderRecipePlaceholder() {
       The feeling should be ${escapeHTML(answers.feeling)}.
     </p>
   `;
-}
-
-function cleanAIText(text) {
-  return String(text || "")
-    .replace(/#+\s*/g, "")
-    .replace(/\*\*/g, "")
-    .replace(/\*/g, "")
-    .trim();
-}
-
-function formatText(text) {
-  const lines = text.split("\n").filter((line) => line.trim() !== "");
-
-  return lines.map((line) => {
-    const clean = line.trim();
-
-    if (clean.endsWith(":")) {
-      return `<h4>${escapeHTML(clean.replace(":", ""))}</h4>`;
-    }
-
-    return `<p>${escapeHTML(clean)}</p>`;
-  }).join("");
 }
 
 function escapeHTML(value) {
