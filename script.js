@@ -7,7 +7,8 @@ const state = {
   answers: {},
   preview: null,
   html: "",
-  css: ""
+  css: "",
+  isLoading: false
 };
 
 const titles = [
@@ -136,11 +137,11 @@ function goToStep(step) {
 
   $("#kicker").textContent = `Step ${String(step + 1).padStart(2, "0")}`;
   $("#title").textContent = titles[step];
-  $("#back").disabled = step === 0;
-  $("#next").disabled = step === 2;
+  $("#back").disabled = step === 0 || state.isLoading;
+  $("#next").disabled = step === 2 || state.isLoading;
   $("#next").textContent = step === 0 ? "Generate preview" : "Continue to recipe";
 
-  if (step === 1) renderFrame();
+  if (step === 1 && !state.isLoading) renderFrame();
 }
 
 function unlockStep(step) {
@@ -186,17 +187,17 @@ function collectAnswers() {
 }
 
 async function generatePreview() {
-  $("#summary").className = "result";
-  $("#summary").innerHTML = `<p class="muted">Generating a visual preview with Gemma 4...</p>`;
+  setLoading(true);
+  clearWarning();
+  loadingFrame();
 
-  $("#next").disabled = true;
-  $("#regen").disabled = true;
-  $("#confirm").disabled = true;
+  $("#summary").className = "result";
+  $("#summary").innerHTML = `<p class="muted">Animotion is checking your answers and preparing the preview...</p>`;
 
   console.log("Gemma CSS preview request started");
 
   try {
-    const response = await fetch(GEN, {
+    const response = await fetchWithTimeout(GEN, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -210,7 +211,7 @@ async function generatePreview() {
           top_p: 0.85
         }
       })
-    });
+    }, 25000);
 
     if (!response.ok) {
       throw new Error(`Ollama responded with status ${response.status}`);
@@ -226,9 +227,16 @@ async function generatePreview() {
       throw new Error("Gemma did not return valid JSON.");
     }
 
-    state.preview = normalizePreview(parsed);
-    state.html = state.preview.html;
-    state.css = state.preview.css;
+    const preview = normalizePreview(parsed);
+    const errors = validatePreview(preview);
+
+    if (errors.length > 0) {
+      throw new Error(errors.join(", "));
+    }
+
+    state.preview = preview;
+    state.html = preview.html;
+    state.css = preview.css;
 
     renderSummary();
     renderFrame();
@@ -237,19 +245,44 @@ async function generatePreview() {
   } catch (error) {
     console.warn("CSS preview generation failed:", error.message);
 
-    $("#summary").className = "result";
-    $("#summary").innerHTML = `
-      <h4>Preview could not be generated yet</h4>
-      <p>
-        The connection was made, but the generated preview was not usable yet.
-        This will be handled better in a later version.
-      </p>
-    `;
+    state.preview = fallbackPreview();
+    state.html = state.preview.html;
+    state.css = state.preview.css;
+
+    renderSummary();
+    renderFrame();
+
+    showWarning("Animotion used a simple backup preview because the generated preview was not usable yet.");
   }
 
-  $("#next").disabled = false;
-  $("#regen").disabled = false;
-  $("#confirm").disabled = false;
+  setLoading(false);
+}
+
+function fetchWithTimeout(url, options, timeout = 20000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  return fetch(url, {
+    ...options,
+    signal: controller.signal
+  }).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+function setLoading(value) {
+  state.isLoading = value;
+
+  $("#loadingBox").hidden = !value;
+  $("#next").disabled = value || state.step === 2;
+  $("#back").disabled = value || state.step === 0;
+  $("#regen").disabled = value;
+  $("#confirm").disabled = value;
+  $("#replay").disabled = value;
+
+  $$(".step").forEach((button) => {
+    button.disabled = value || Number(button.dataset.step) > state.max;
+  });
 }
 
 function previewPrompt(answers) {
@@ -325,6 +358,36 @@ function normalizePreview(data) {
   };
 }
 
+function validatePreview(preview) {
+  const errors = [];
+
+  if (!preview.html.trim()) {
+    errors.push("missing HTML");
+  }
+
+  if (!preview.css.trim()) {
+    errors.push("missing CSS");
+  }
+
+  if (!preview.html.includes("preview-scene")) {
+    errors.push("missing preview-scene");
+  }
+
+  if (!preview.html.includes("anim-object")) {
+    errors.push("missing anim-object");
+  }
+
+  if (!preview.css.includes("@keyframes")) {
+    errors.push("missing keyframes");
+  }
+
+  if (/<script/i.test(preview.html)) {
+    errors.push("script tag found");
+  }
+
+  return errors;
+}
+
 function safeHTML(html) {
   return html
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
@@ -335,7 +398,259 @@ function safeHTML(html) {
 function safeCSS(css) {
   return css
     .replace(/@import[^;]+;/gi, "")
-    .replace(/url\((.*?)\)/gi, "none");
+    .replace(/url\((.*?)\)/gi, "none")
+    .replace(/javascript:/gi, "");
+}
+
+function fallbackPreview() {
+  const answers = state.answers;
+  const label = escapeHTML(labelForObject(answers.objectType));
+  const technique = guessTechnique(answers);
+
+  let html = `
+    <div class="preview-scene">
+      <div class="anim-object">${label}</div>
+    </div>
+  `;
+
+  let css = `
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+    }
+
+    .preview-scene {
+      width: 100vw;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: radial-gradient(circle at center, #2d1b69, #111827);
+    }
+
+    .anim-object {
+      padding: 22px 34px;
+      border-radius: 24px;
+      background: #7c3aed;
+      color: white;
+      font-size: clamp(1.8rem, 5vw, 4rem);
+      font-weight: 950;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+      animation: fallbackMotion 1.4s ease-out forwards;
+    }
+
+    @keyframes fallbackMotion {
+      from {
+        opacity: 0;
+        transform: translateY(34px) scale(0.92);
+        filter: blur(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+      }
+    }
+  `;
+
+  if (answers.motionAction.includes("pop") || answers.motionAction.includes("bounce")) {
+    css = `
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+      }
+
+      .preview-scene {
+        width: 100vw;
+        height: 100vh;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background: #111827;
+      }
+
+      .anim-object {
+        padding: 22px 34px;
+        border-radius: 24px;
+        background: #7c3aed;
+        color: white;
+        font-size: clamp(1.8rem, 5vw, 4rem);
+        font-weight: 950;
+        animation: fallbackMotion 1.1s cubic-bezier(.2, 1.5, .4, 1) forwards;
+      }
+
+      @keyframes fallbackMotion {
+        0% {
+          opacity: 0;
+          transform: scale(0.4);
+        }
+
+        70% {
+          opacity: 1;
+          transform: scale(1.12);
+        }
+
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+    `;
+  }
+
+  if (answers.motionAction.includes("reveal") || answers.startState.includes("behind")) {
+    html = `
+      <div class="preview-scene">
+        <div class="mask">
+          <div class="anim-object">${label}</div>
+        </div>
+      </div>
+    `;
+
+    css = `
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+      }
+
+      .preview-scene {
+        width: 100vw;
+        height: 100vh;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background: #111827;
+      }
+
+      .mask {
+        overflow: hidden;
+        padding: 12px;
+      }
+
+      .anim-object {
+        color: white;
+        font-size: clamp(2rem, 6vw, 5rem);
+        font-weight: 950;
+        transform: translateY(110%);
+        animation: fallbackMotion 1.3s ease-out forwards;
+      }
+
+      @keyframes fallbackMotion {
+        from {
+          opacity: 0;
+          transform: translateY(110%);
+        }
+
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    `;
+  }
+
+  if (answers.motionAction.includes("glitch")) {
+    css = `
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+      }
+
+      .preview-scene {
+        width: 100vw;
+        height: 100vh;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background: #050816;
+      }
+
+      .anim-object {
+        padding: 22px 34px;
+        border-radius: 18px;
+        border: 2px solid #a78bfa;
+        color: white;
+        font-size: clamp(1.8rem, 5vw, 4rem);
+        font-weight: 950;
+        letter-spacing: 0.08em;
+        animation: fallbackMotion 1.2s steps(2, end) forwards;
+      }
+
+      @keyframes fallbackMotion {
+        0% {
+          opacity: 0;
+          transform: translateX(-20px);
+          filter: blur(6px);
+        }
+
+        20% {
+          opacity: 1;
+          transform: translateX(18px);
+          filter: blur(0);
+        }
+
+        40% {
+          opacity: 0.4;
+          transform: translateX(-12px);
+        }
+
+        65% {
+          opacity: 1;
+          transform: translateX(8px);
+        }
+
+        100% {
+          opacity: 1;
+          transform: translateX(0);
+          filter: blur(0);
+        }
+      }
+    `;
+  }
+
+  return {
+    understood: `You want a ${answers.objectType} to ${answers.motionAction}.`,
+    techniqueName: technique,
+    confidence: "Medium",
+    whyThisTechnique: "This backup animation matches the movement and feeling you selected.",
+    plainSummary: `The ${answers.objectType} starts ${answers.startState}, then ${answers.motionAction}, and ends ${answers.endState}.`,
+    html,
+    css
+  };
+}
+
+function guessTechnique(answers) {
+  if (answers.motionAction.includes("reveal") || answers.startState.includes("behind")) {
+    return "Masked reveal";
+  }
+
+  if (answers.motionAction.includes("pop") || answers.motionAction.includes("bounce")) {
+    return "Pop-in animation";
+  }
+
+  if (answers.motionAction.includes("blur")) {
+    return "Blur-to-focus reveal";
+  }
+
+  if (answers.motionAction.includes("draw")) {
+    return "Draw-on animation";
+  }
+
+  if (answers.motionAction.includes("glitch")) {
+    return "Glitch reveal";
+  }
+
+  return "Simple motion reveal";
+}
+
+function labelForObject(objectType) {
+  if (objectType.includes("logo")) return "LOGO";
+  if (objectType.includes("button")) return "Button";
+  if (objectType.includes("shape")) return "Shape";
+  if (objectType.includes("transition")) return "WIPE";
+  if (objectType.includes("image")) return "Image";
+  return "Title";
 }
 
 function renderSummary() {
@@ -414,6 +729,72 @@ function renderFrame() {
       </body>
     </html>
   `;
+}
+
+function loadingFrame() {
+  $("#frame").srcdoc = `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body {
+            margin: 0;
+            width: 100vw;
+            height: 100vh;
+            display: grid;
+            place-items: center;
+            font-family: system-ui, sans-serif;
+            background: #fbfaff;
+            color: #5b21b6;
+          }
+
+          .loading {
+            text-align: center;
+            font-weight: 900;
+          }
+
+          .dot {
+            width: 54px;
+            height: 54px;
+            margin: 0 auto 18px;
+            border-radius: 999px;
+            background: #7c3aed;
+            animation: pulse 1s ease-in-out infinite alternate;
+          }
+
+          @keyframes pulse {
+            from {
+              transform: scale(0.78);
+              opacity: 0.5;
+            }
+
+            to {
+              transform: scale(1);
+              opacity: 1;
+            }
+          }
+        </style>
+      </head>
+
+      <body>
+        <div class="loading">
+          <div class="dot"></div>
+          Building preview...
+        </div>
+      </body>
+    </html>
+  `;
+}
+
+function showWarning(message) {
+  $("#warning").hidden = false;
+  $("#warning").textContent = message;
+}
+
+function clearWarning() {
+  $("#warning").hidden = true;
+  $("#warning").textContent = "";
 }
 
 function renderRecipePlaceholder() {

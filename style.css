@@ -6,6 +6,8 @@
   --brand: #7c3aed;
   --brand-dark: #5b21b6;
   --soft: #ede9fe;
+  --warning: #fff7ed;
+  --warning-text: #9a3412;
   --shadow: 0 24px 70px rgba(17, 24, 39, 0.12);
 }
 
@@ -303,6 +305,29 @@ label {
 
 .result p {
   margin-bottom: 10px;
+}
+
+.loadingBox {
+  margin: 16px 0;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--soft);
+  color: var(--brand-dark);
+}
+
+.loadingBox p {
+  margin: 6px 0 0;
+  color: var(--brand-dark);
+  line-height: 1.5;
+}
+
+.warning {
+  padding: 14px 18px;
+  background: var(--warning);
+  color: var(--warning-text);
+  border-top: 1px solid #fed7aa;
+  line-height: 1.5;
+  font-weight: 700;
 }
 
 iframe {

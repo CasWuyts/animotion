@@ -154,6 +154,11 @@
               <button id="regen">Regenerate</button>
             </div>
 
+            <div id="loadingBox" class="loadingBox" hidden>
+              <strong>Generating your preview...</strong>
+              <p>Gemma 4 is translating your answers into a CSS animation. This can take a few seconds.</p>
+            </div>
+
             <div id="summary" class="result empty">
               Fill in the questions first.
             </div>
@@ -175,6 +180,8 @@
             </div>
 
             <iframe id="frame"></iframe>
+
+            <div id="warning" class="warning" hidden></div>
           </article>
         </div>
       </section>
