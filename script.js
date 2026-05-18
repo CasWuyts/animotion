@@ -8,6 +8,7 @@ const state = {
   preview: null,
   html: "",
   css: "",
+  recipe: "",
   isLoading: false
 };
 
@@ -73,10 +74,10 @@ function bindEvents() {
     goToStep(0);
   });
 
-  $("#confirm").addEventListener("click", () => {
-    renderRecipePlaceholder();
+  $("#confirm").addEventListener("click", async () => {
     unlockStep(2);
     goToStep(2);
+    await generateRecipe();
   });
 
   $$(".step").forEach((button) => {
@@ -114,9 +115,9 @@ async function handleNext() {
   }
 
   if (state.step === 1) {
-    renderRecipePlaceholder();
     unlockStep(2);
     goToStep(2);
+    await generateRecipe();
   }
 }
 
@@ -361,29 +362,12 @@ function normalizePreview(data) {
 function validatePreview(preview) {
   const errors = [];
 
-  if (!preview.html.trim()) {
-    errors.push("missing HTML");
-  }
-
-  if (!preview.css.trim()) {
-    errors.push("missing CSS");
-  }
-
-  if (!preview.html.includes("preview-scene")) {
-    errors.push("missing preview-scene");
-  }
-
-  if (!preview.html.includes("anim-object")) {
-    errors.push("missing anim-object");
-  }
-
-  if (!preview.css.includes("@keyframes")) {
-    errors.push("missing keyframes");
-  }
-
-  if (/<script/i.test(preview.html)) {
-    errors.push("script tag found");
-  }
+  if (!preview.html.trim()) errors.push("missing HTML");
+  if (!preview.css.trim()) errors.push("missing CSS");
+  if (!preview.html.includes("preview-scene")) errors.push("missing preview-scene");
+  if (!preview.html.includes("anim-object")) errors.push("missing anim-object");
+  if (!preview.css.includes("@keyframes")) errors.push("missing keyframes");
+  if (/<script/i.test(preview.html)) errors.push("script tag found");
 
   return errors;
 }
@@ -797,23 +781,181 @@ function clearWarning() {
   $("#warning").textContent = "";
 }
 
-function renderRecipePlaceholder() {
-  const answers = state.answers;
+async function generateRecipe() {
+  setRecipeLoading(true);
 
   $("#recipe").className = "result";
   $("#recipe").innerHTML = `
-    <h4>Temporary recipe preview</h4>
-    <p>
-      In a later version, this step will be generated with Gemma 4.
-    </p>
-
-    <h4>Current animation idea</h4>
-    <p>
-      You want a ${escapeHTML(answers.objectType)} to ${escapeHTML(answers.motionAction)}.
-      It starts ${escapeHTML(answers.startState)} and ends ${escapeHTML(answers.endState)}.
-      The feeling should be ${escapeHTML(answers.feeling)}.
+    <p class="muted">
+      Gemma 4 is turning the preview into After Effects steps...
     </p>
   `;
+
+  console.log("Gemma After Effects recipe request started");
+
+  try {
+    const response = await fetchWithTimeout(GEN, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        stream: false,
+        prompt: recipePrompt(state.answers, state.preview),
+        options: {
+          temperature: 0.35,
+          top_p: 0.9
+        }
+      })
+    }, 30000);
+
+    if (!response.ok) {
+      throw new Error(`Ollama responded with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    state.recipe = cleanRecipeText(data.response || "");
+
+    if (!state.recipe.trim()) {
+      throw new Error("Gemma returned an empty recipe.");
+    }
+
+    renderRecipe(state.recipe);
+
+    console.log("After Effects recipe generated");
+    console.log("Recipe response:", state.recipe);
+  } catch (error) {
+    console.warn("Recipe generation failed:", error.message);
+
+    state.recipe = fallbackRecipe();
+    renderRecipe(state.recipe);
+  }
+
+  setRecipeLoading(false);
+}
+
+function recipePrompt(answers, preview) {
+  return `
+You are Gemma 4 inside Animotion.
+
+Animotion helps After Effects beginners turn a visual animation idea into clear After Effects steps.
+
+The user answered:
+${JSON.stringify(answers, null, 2)}
+
+Animotion understood the animation as:
+${JSON.stringify(preview, null, 2)}
+
+Now explain how to recreate this animation in Adobe After Effects.
+
+Use this exact structure:
+
+1. Animation name
+2. In normal words
+3. After Effects tools needed
+4. Step-by-step build instructions
+5. Suggested keyframes
+6. Easing and timing advice
+7. Common beginner mistake
+
+Rules:
+- Write for a beginner.
+- Keep it practical.
+- Do not use markdown.
+- Do not use hashtags.
+- Do not use emojis.
+- Do not use asterisks.
+- Do not mention CSS.
+- Explain the animation in After Effects terms, but keep the language simple.
+`;
+}
+
+function fallbackRecipe() {
+  const answers = state.answers;
+  const technique = guessTechnique(answers);
+
+  return `
+1. Animation name
+${technique}
+
+2. In normal words
+The ${answers.objectType} starts ${answers.startState}, then ${answers.motionAction}, and ends ${answers.endState}. The animation should feel ${answers.feeling}.
+
+3. After Effects tools needed
+Shape layer or text layer
+Transform properties
+Position
+Scale
+Opacity
+Easy Ease
+Graph Editor
+
+4. Step-by-step build instructions
+Create the layer you want to animate.
+Place it in its final position first.
+Move the playhead to the start of the animation.
+Set the starting values based on the idea, for example lower opacity, smaller scale or a position outside the screen.
+Add keyframes for the starting values.
+Move the playhead forward by about one second.
+Set the final values so the object is visible and in the correct position.
+Select the keyframes and apply Easy Ease.
+
+5. Suggested keyframes
+At 0 seconds: start position, lower opacity or smaller scale.
+At 1 second: final position, full opacity and normal scale.
+For a smoother result, add a small overshoot before the final keyframe if the animation should feel playful.
+
+6. Easing and timing advice
+Use Easy Ease to make the movement feel less robotic.
+For a smooth animation, keep the duration around 1 to 1.5 seconds.
+For a fast animation, keep it closer to 0.6 to 0.8 seconds.
+Use the Graph Editor to make the movement start fast and slow down near the end.
+
+7. Common beginner mistake
+A common mistake is making the animation too slow or too linear. Without easing, the movement can feel mechanical instead of natural.
+`;
+}
+
+function renderRecipe(text) {
+  $("#recipe").className = "result";
+  $("#recipe").innerHTML = formatRecipeText(text);
+}
+
+function cleanRecipeText(text) {
+  return String(text || "")
+    .replace(/#+\s*/g, "")
+    .replace(/\*\*/g, "")
+    .replace(/\*/g, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
+function formatRecipeText(text) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return lines.map((line) => {
+    if (/^\d+\.\s/.test(line)) {
+      return `<h4>${escapeHTML(line)}</h4>`;
+    }
+
+    return `<p>${escapeHTML(line)}</p>`;
+  }).join("");
+}
+
+function setRecipeLoading(value) {
+  state.isLoading = value;
+
+  $("#back").disabled = value;
+  $("#next").disabled = true;
+
+  $$(".step").forEach((button) => {
+    button.disabled = value || Number(button.dataset.step) > state.max;
+  });
 }
 
 function escapeHTML(value) {
